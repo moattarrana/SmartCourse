@@ -1,0 +1,73 @@
+name: smartcourse
+
+services:
+  # --- Databases: one per service (database-per-service pattern) ------------
+  users-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-smartcourse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smartcourse}
+      POSTGRES_DB: users_db
+    volumes:
+      - users_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-smartcourse} -d users_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    ports:
+      - "5432:5432"
+
+  courses-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-smartcourse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smartcourse}
+      POSTGRES_DB: courses_db
+    volumes:
+      - courses_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-smartcourse} -d courses_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    ports:
+      - "5433:5432"
+
+  # --- Services -------------------------------------------------------------
+  user-service:
+    build: ./services/user-service
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-smartcourse}:${POSTGRES_PASSWORD:-smartcourse}@users-db:5432/users_db
+      JWT_SECRET: ${JWT_SECRET:-local-dev-secret-change-me}
+    depends_on:
+      users-db:
+        condition: service_healthy
+    ports:
+      - "8001:8000"
+
+  course-service:
+    build: ./services/course-service
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-smartcourse}:${POSTGRES_PASSWORD:-smartcourse}@courses-db:5432/courses_db
+      JWT_SECRET: ${JWT_SECRET:-local-dev-secret-change-me}
+    depends_on:
+      courses-db:
+        condition: service_healthy
+    ports:
+      - "8002:8000"
+
+  api-gateway:
+    build: ./services/api-gateway
+    environment:
+      USER_SERVICE_URL: http://user-service:8000
+      COURSE_SERVICE_URL: http://course-service:8000
+    depends_on:
+      - user-service
+      - course-service
+    ports:
+      - "8000:8000"
+
+volumes:
+  users_db_data:
+  courses_db_data:
