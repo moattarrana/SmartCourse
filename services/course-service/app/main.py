@@ -1,4 +1,4 @@
-"""Course service application entrypoint."""
+
 import logging
 import time
 from contextlib import asynccontextmanager

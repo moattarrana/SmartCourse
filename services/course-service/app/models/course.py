@@ -30,9 +30,6 @@ class Course(Base):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
 
-    # Soft reference to a user in the *user service*. Intentionally NOT a
-    # foreign key: that user lives in a different service and database. We trust
-    # the authenticated JWT that this id belongs to a real instructor.
     instructor_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), index=True, nullable=False
     )

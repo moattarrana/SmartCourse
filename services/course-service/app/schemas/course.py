@@ -1,4 +1,4 @@
-"""Course request/response schemas."""
+
 import uuid
 from datetime import datetime
 

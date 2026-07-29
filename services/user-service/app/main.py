@@ -41,6 +41,6 @@ app.include_router(auth.router)
 app.include_router(users.router)
 
 
-@app.get("/health", tags=["meta"])
+@app.get("/health", tags=["meta"])  # maps an HTTP GET request to the function beneath it
 def health() -> dict:
     return {"status": "ok", "service": settings.SERVICE_NAME}
