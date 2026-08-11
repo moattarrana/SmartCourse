@@ -1,4 +1,4 @@
-"""Database engine + session for the course service (its own DB)."""
+"""Database engine + session for the enrollment service (its own DB)."""
 from collections.abc import Generator
 
 from sqlalchemy import create_engine
@@ -11,7 +11,7 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
 class Base(DeclarativeBase):
-    """Declarative base for course-service models."""
+    """Declarative base for enrollment-service models."""
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -23,7 +23,6 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def init_db() -> None:
-    # Import all models so they register on Base.metadata before create_all.
-    from app.models import course, content  # noqa: F401
+    from app.models import enrollment  # noqa: F401
 
     Base.metadata.create_all(bind=engine)

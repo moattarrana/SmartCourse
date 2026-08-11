@@ -16,5 +16,10 @@ class Settings(BaseSettings):
     JWT_SECRET: str = "change-me-in-production"
     JWT_ALGORITHM: str = "HS256"
 
+    # Temporal (course publishing workflow)
+    TEMPORAL_HOST: str = "temporal:7233"
+    TEMPORAL_NAMESPACE: str = "default"
+    TEMPORAL_TASK_QUEUE: str = "course-publishing"
+
 
 settings = Settings()

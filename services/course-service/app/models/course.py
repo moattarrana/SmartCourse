@@ -13,6 +13,7 @@ from app.core.database import Base
 
 class CourseStatus(str, enum.Enum):
     DRAFT = "draft"
+    PUBLISHING = "publishing"  # transient: Temporal publish workflow in progress
     PUBLISHED = "published"
     ARCHIVED = "archived"
 

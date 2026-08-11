@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     SERVICE_NAME: str = "api-gateway"
     USER_SERVICE_URL: str = "http://localhost:8001"
     COURSE_SERVICE_URL: str = "http://localhost:8002"
+    ENROLLMENT_SERVICE_URL: str = "http://enrollment-service:8000"
     REQUEST_TIMEOUT_SECONDS: float = 30.0
 
 

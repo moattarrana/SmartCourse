@@ -6,10 +6,17 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import CurrentUser, get_current_user, require_instructor
+from app.core.config import settings
 from app.core.database import get_db
+from app.core.temporal_client import get_temporal_client
 from app.models.course import CourseStatus
 from app.schemas.course import CourseCreate, CourseRead, CourseUpdate
-from app.services import course_service
+from app.services import content_service, course_service
+
+try:  # exception location varies slightly across temporalio versions
+    from temporalio.client import WorkflowAlreadyStartedError
+except ImportError:  # pragma: no cover
+    from temporalio.exceptions import WorkflowAlreadyStartedError
 
 router = APIRouter(prefix="/courses", tags=["courses"])
 
@@ -72,7 +79,13 @@ def update_course(
     except course_service.CourseNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Course not found")
     _ensure_owner(course, current)
-    course = course_service.update_course(db, course_id, data)
+    try:
+        course = course_service.update_course(db, course_id, data)
+    except course_service.InvalidTransitionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Illegal status transition: {exc}",
+        )
     return CourseRead.model_validate(course)
 
 
@@ -88,3 +101,57 @@ def delete_course(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Course not found")
     _ensure_owner(course, current)
     course_service.delete_course(db, course_id)
+
+
+@router.post("/{course_id}/publish", status_code=status.HTTP_202_ACCEPTED)
+async def publish_course(
+    course_id: uuid.UUID,
+    current: CurrentUser = Depends(require_instructor),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Start the Temporal publishing workflow for a course.
+
+    Validates ownership, state, and that the course has content, flips it to
+    PUBLISHING, then hands off to Temporal. The worker moves it to PUBLISHED on
+    success or back to DRAFT on failure.
+    """
+    try:
+        course = course_service.get_course(db, course_id)
+    except course_service.CourseNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Course not found")
+    _ensure_owner(course, current)
+
+    if course.status == CourseStatus.PUBLISHED:
+        raise HTTPException(status_code=409, detail="Course already published")
+    if course.status == CourseStatus.PUBLISHING:
+        raise HTTPException(status_code=409, detail="Publish already in progress")
+    try:
+        course_service.assert_can_transition(course.status, CourseStatus.PUBLISHING)
+    except course_service.InvalidTransitionError:
+        raise HTTPException(
+            status_code=409, detail=f"Cannot publish from {course.status.value}"
+        )
+# if course doesnt have modules or lessions
+    if not content_service.course_has_content(db, course_id):
+        raise HTTPException(status_code=422, detail="Course has no lessons to publish")
+
+    # Flip to PUBLISHING first; the workflow owns the rest of the transition.
+    course_service.set_status(db, course_id, CourseStatus.PUBLISHING)
+
+    client = await get_temporal_client()
+    try:
+        #idempotency: if a publish is already running for that course, starting again raises
+        await client.start_workflow(
+            "CoursePublishingWorkflow",
+            str(course_id),
+            id=f"publish-{course_id}",
+            task_queue=settings.TEMPORAL_TASK_QUEUE,
+        )
+    except WorkflowAlreadyStartedError:
+        pass  # idempotent: a publish for this course is already running
+    except Exception:
+        # Temporal unreachable — undo the state change so it isn't stuck.
+        course_service.set_status(db, course_id, CourseStatus.DRAFT)
+        raise HTTPException(status_code=503, detail="Publishing service unavailable")
+
+    return {"course_id": str(course_id), "status": "publishing"}

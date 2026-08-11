@@ -41,6 +41,7 @@ _ROUTES: list[tuple[str, str]] = [
     ("/api/auth", settings.USER_SERVICE_URL),
     ("/api/users", settings.USER_SERVICE_URL),
     ("/api/courses", settings.COURSE_SERVICE_URL),
+    ("/api/enrollments", settings.ENROLLMENT_SERVICE_URL),
 ]
 
 # Hop-by-hop headers must not be forwarded (RFC 7230 sec 6.1).

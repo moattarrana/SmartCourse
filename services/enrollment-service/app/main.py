@@ -1,3 +1,4 @@
+"""Enrollment service application entrypoint."""
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -6,7 +7,7 @@ from fastapi import FastAPI
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
-from app.api.routes import content, courses
+from app.api.routes import enrollments
 from app.core.config import settings
 from app.core.database import engine, init_db
 
@@ -34,9 +35,8 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="SmartCourse Course Service", version="0.2.0", lifespan=lifespan)
-app.include_router(courses.router)
-app.include_router(content.router)
+app = FastAPI(title="SmartCourse Enrollment Service", version="0.1.0", lifespan=lifespan)
+app.include_router(enrollments.router)
 
 
 @app.get("/health", tags=["meta"])
