@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     COURSE_SERVICE_URL: str = "http://localhost:8002"
     ENROLLMENT_SERVICE_URL: str = "http://enrollment-service:8000"
     REQUEST_TIMEOUT_SECONDS: float = 30.0
+    OTEL_EXPORTER_OTLP_ENDPOINT: str = "http://jaeger:4318"
 
 
 settings = Settings()

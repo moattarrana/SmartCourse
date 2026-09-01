@@ -21,5 +21,15 @@ class Settings(BaseSettings):
     TEMPORAL_NAMESPACE: str = "default"
     TEMPORAL_TASK_QUEUE: str = "course-publishing"
 
+    # Shared secret the Temporal worker uses to call internal endpoints.
+    INTERNAL_API_KEY: str = "change-me-internal-key"
+
+    # Observability (OpenTelemetry -> Jaeger via OTLP/HTTP)
+    OTEL_EXPORTER_OTLP_ENDPOINT: str = "http://jaeger:4318"
+
+    # Kafka (event publishing)
+    KAFKA_BOOTSTRAP_SERVERS: str = "kafka:9092"
+    KAFKA_COURSE_TOPIC: str = "course.events"
+
 
 settings = Settings()

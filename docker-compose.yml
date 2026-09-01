@@ -1,7 +1,116 @@
 name: smartcourse
 
 services:
+  mailpit:
+    image: axllent/mailpit:v1.20
+    ports:
+      - "1025:1025"   # SMTP (the worker sends here)
+      - "8025:8025"   # web UI (you view caught emails here)
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    ports:
+      - "3000:3000"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.60
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"   # Jaeger web UI
+      - "4317:4317"     # OTLP gRPC (services will send traces here)
+      - "4318:4318"     # OTLP HTTP
+
+
+  mongo:
+    image: mongo:7
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
   # --- Databases: one per service (database-per-service pattern) ------------
+  analytics-service:
+    build: ./services/analytics-service
+    environment:
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-smartcourse}:${RABBITMQ_PASS:-smartcourse}@rabbitmq:5672//
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_ENROLLMENT_TOPIC: enrollment.events
+      KAFKA_COURSE_TOPIC: course.events
+      KAFKA_PROGRESS_TOPIC: progress.events
+      KAFKA_GROUP_ID: analytics-service
+      MONGO_URL: mongodb://mongo:27017
+      MONGO_DB: analytics_db
+    depends_on:
+      kafka:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8004:8000"
+
+  celery-worker:
+    build: ./services/analytics-service
+    command: ["celery", "-A", "app.tasks.celery_app", "worker", "--loglevel=info"]
+    environment:
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      EMAIL_FROM: noreply@smartcourse.local
+      MONGO_URL: mongodb://mongo:27017
+      MONGO_DB: analytics_db
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-smartcourse}:${RABBITMQ_PASS:-smartcourse}@rabbitmq:5672//
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    depends_on:
+      mailpit:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
   users-db:
     image: postgres:16-alpine
     environment:
@@ -17,6 +126,31 @@ services:
       retries: 10
     ports:
       - "5432:5432"
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.1
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    ports:
+      - "9092:9092"
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+     
 
   courses-db:
     image: postgres:16-alpine
@@ -97,8 +231,12 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-smartcourse}:${POSTGRES_PASSWORD:-smartcourse}@users-db:5432/users_db
       JWT_SECRET: ${JWT_SECRET:-local-dev-secret-change-me}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_USER_TOPIC: user.events
     depends_on:
       users-db:
+        condition: service_healthy
+      kafka:
         condition: service_healthy
     ports:
       - "8001:8000"
@@ -106,11 +244,19 @@ services:
   course-service:
     build: ./services/course-service
     environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_COURSE_TOPIC: course.events
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-smartcourse}:${POSTGRES_PASSWORD:-smartcourse}@courses-db:5432/courses_db
       JWT_SECRET: ${JWT_SECRET:-local-dev-secret-change-me}
       TEMPORAL_HOST: temporal:7233
       TEMPORAL_TASK_QUEUE: course-publishing
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-change-me-internal-key}
     depends_on:
+      kafka:
+        condition: service_started
+      jaeger:
+        condition: service_started
       courses-db:
         condition: service_healthy
       temporal:
@@ -122,25 +268,52 @@ services:
   temporal-worker:
     build: ./services/temporal-worker
     environment:
-      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-smartcourse}:${POSTGRES_PASSWORD:-smartcourse}@courses-db:5432/courses_db
+      ENROLLMENT_SERVICE_URL: http://enrollment-service:8000
+      ENROLLMENT_TASK_QUEUE: enrollment-processing
+      COURSE_SERVICE_URL: http://course-service:8000
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-change-me-internal-key}
       TEMPORAL_HOST: temporal:7233
       TEMPORAL_TASK_QUEUE: course-publishing
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_COURSE_TOPIC: course.events
+      KAFKA_ENROLLMENT_TOPIC: enrollment.events
+      CELERY_BROKER_URL: amqp://smartcourse:smartcourse@rabbitmq:5672//
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
     depends_on:
-      courses-db:
-        condition: service_healthy
+      kafka:
+        condition: service_started
+      rabbitmq:
+        condition: service_started
+      redis:
+        condition: service_started
+      course-service:
+        condition: service_started
       temporal:
         condition: service_started
 
   enrollment-service:
     build: ./services/enrollment-service
     environment:
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-change-me-internal-key}
+      TEMPORAL_HOST: temporal:7233
+      TEMPORAL_TASK_QUEUE: enrollment-processing
+      KAFKA_PROGRESS_TOPIC: progress.events
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_ENROLLMENT_TOPIC: enrollment.events
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-smartcourse}:${POSTGRES_PASSWORD:-smartcourse}@enrollments-db:5432/enrollments_db
       JWT_SECRET: ${JWT_SECRET:-local-dev-secret-change-me}
       COURSE_SERVICE_URL: http://course-service:8000
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
     depends_on:
+      jaeger:
+        condition: service_started
       enrollments-db:
         condition: service_healthy
       course-service:
+        condition: service_started
+      kafka:
+        condition: service_healthy
+      temporal:
         condition: service_started
     ports:
       - "8003:8000"
@@ -151,15 +324,47 @@ services:
       USER_SERVICE_URL: http://user-service:8000
       COURSE_SERVICE_URL: http://course-service:8000
       ENROLLMENT_SERVICE_URL: http://enrollment-service:8000
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
     depends_on:
-      - user-service
-      - course-service
-      - enrollment-service
+      jaeger:
+        condition: service_started
+      user-service:
+        condition: service_started
+      course-service:
+        condition: service_started
+      enrollment-service:
+        condition: service_started
     ports:
       - "8000:8000"
+  
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-smartcourse}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-smartcourse}
+    ports:
+      - "5672:5672"     # AMQP (Celery connects here)
+      - "15672:15672"   # management UI in the browser
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
 
 volumes:
   users_db_data:
   courses_db_data:
   enrollments_db_data:
   temporal_db_data:
+  mongo_data:
+  grafana_data:

@@ -111,9 +111,12 @@ async def publish_course(
 ) -> dict:
     """Start the Temporal publishing workflow for a course.
 
-    Validates ownership, state, and that the course has content, flips it to
-    PUBLISHING, then hands off to Temporal. The worker moves it to PUBLISHED on
-    success or back to DRAFT on failure.
+    Validates ownership, state, and that the course has content, then hands off
+    to Temporal. The workflow owns the ENTIRE status transition: its first
+    activity flips DRAFT -> PUBLISHING, and it moves the course to PUBLISHED on
+    success or back to DRAFT on failure. Because the endpoint no longer changes
+    the status, a course can never be stranded in PUBLISHING if the workflow
+    fails to start.
     """
     try:
         course = course_service.get_course(db, course_id)
@@ -126,21 +129,25 @@ async def publish_course(
     if course.status == CourseStatus.PUBLISHING:
         raise HTTPException(status_code=409, detail="Publish already in progress")
     try:
+        # whether this course is allowed to move to PUBLISHING; if not, raise.
         course_service.assert_can_transition(course.status, CourseStatus.PUBLISHING)
     except course_service.InvalidTransitionError:
         raise HTTPException(
             status_code=409, detail=f"Cannot publish from {course.status.value}"
         )
-# if course doesnt have modules or lessions
+
+    # if course doesn't have modules or lessons, reject before starting anything.
     if not content_service.course_has_content(db, course_id):
         raise HTTPException(status_code=422, detail="Course has no lessons to publish")
 
-    # Flip to PUBLISHING first; the workflow owns the rest of the transition.
-    course_service.set_status(db, course_id, CourseStatus.PUBLISHING)
-
+    # NOTE: the status is intentionally NOT changed here. The workflow's first
+    # activity (begin_publishing) flips DRAFT -> PUBLISHING, so if the workflow
+    # never starts (Temporal down), the course simply stays DRAFT.
+    #The endpoint used to do course_service.set_status(db, course_id, CourseStatus.PUBLISHING) before start_workflow.
     client = await get_temporal_client()
     try:
-        #idempotency: if a publish is already running for that course, starting again raises
+        # idempotency: if a publish is already running for this course, starting
+        # again raises WorkflowAlreadyStartedError (handled below).
         await client.start_workflow(
             "CoursePublishingWorkflow",
             str(course_id),
@@ -150,8 +157,7 @@ async def publish_course(
     except WorkflowAlreadyStartedError:
         pass  # idempotent: a publish for this course is already running
     except Exception:
-        # Temporal unreachable — undo the state change so it isn't stuck.
-        course_service.set_status(db, course_id, CourseStatus.DRAFT)
+        # Temporal unreachable. Nothing was changed, so there is nothing to undo.
         raise HTTPException(status_code=503, detail="Publishing service unavailable")
 
     return {"course_id": str(course_id), "status": "publishing"}

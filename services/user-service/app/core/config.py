@@ -5,8 +5,7 @@ of scattering os.getenv() calls through the codebase.
 """
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# sqlalchemy URL format: dialect+driver://username:password@host:port/database
-#sqlalchemy is the engine to talk to database
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -21,6 +20,10 @@ class Settings(BaseSettings):
     JWT_SECRET: str = "change-me-in-production"
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+
+    # Kafka (event publishing)
+    KAFKA_BOOTSTRAP_SERVERS: str = "kafka:9092"
+    KAFKA_USER_TOPIC: str = "user.events"
 
 
 settings = Settings()

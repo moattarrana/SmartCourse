@@ -1,25 +1,24 @@
 """A minimal API gateway / reverse proxy.
 
-Responsibilities kept intentionally small for Week 1:
   - one public entry point for clients
   - path-based routing to the right downstream service
   - transparent forwarding of method, headers (incl. Authorization), body, query
+  - distributed tracing + Prometheus metrics + structured JSON logging
 
 It does NOT terminate auth: each downstream service validates the JWT itself.
-That keeps services independently deployable and testable. Cross-cutting
-concerns (rate limiting, central auth, tracing) can be added here later.
-
-Routing:
-  /api/auth/*    and /api/users/*    -> user service
-  /api/courses/*                     -> course service
 """
 from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.config import settings
+from app.logging_setup import setup_logging
+from app.telemetry import setup_telemetry
+
+setup_logging(settings.SERVICE_NAME)
 
 # Persistent async client (connection pooling), managed by the app lifespan.
 _client: httpx.AsyncClient | None = None
@@ -33,7 +32,10 @@ async def lifespan(app: FastAPI):
     await _client.aclose()
 
 
-app = FastAPI(title="SmartCourse API Gateway", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="SmartCourse API Gateway", version="0.2.0", lifespan=lifespan)
+
+setup_telemetry(app, settings.SERVICE_NAME, settings.OTEL_EXPORTER_OTLP_ENDPOINT)
+Instrumentator().instrument(app).expose(app)
 
 
 # Longest prefix first so /api/users doesn't get swallowed by a broader rule.

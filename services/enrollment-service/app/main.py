@@ -4,14 +4,17 @@ import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from prometheus_fastapi_instrumentator import Instrumentator
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
-from app.api.routes import enrollments
+from app.api.routes import enrollments, internal
 from app.core.config import settings
 from app.core.database import engine, init_db
+from app.core.logging_setup import setup_logging
+from app.core.telemetry import setup_telemetry
 
-logging.basicConfig(level=logging.INFO)
+setup_logging(settings.SERVICE_NAME)
 logger = logging.getLogger(settings.SERVICE_NAME)
 
 
@@ -35,8 +38,12 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="SmartCourse Enrollment Service", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="SmartCourse Enrollment Service", version="0.3.0", lifespan=lifespan)
 app.include_router(enrollments.router)
+app.include_router(internal.router)
+
+setup_telemetry(app, settings.SERVICE_NAME, settings.OTEL_EXPORTER_OTLP_ENDPOINT)
+Instrumentator().instrument(app).expose(app)   # prometheu`s metrics endpoint at /metrics`
 
 
 @app.get("/health", tags=["meta"])

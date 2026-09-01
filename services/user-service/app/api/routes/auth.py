@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import create_access_token
+from app.events.user_events import publish_user_registered
 from app.schemas.token import TokenResponse
 from app.schemas.user import LoginRequest, UserCreate, UserRead
 from app.services import user_service
@@ -20,6 +21,8 @@ def register(data: UserCreate, db: Session = Depends(get_db)) -> UserRead:
             status_code=status.HTTP_409_CONFLICT,
             detail="A user with this email already exists",
         )
+    # Emit UserRegistered after the row is committed (best-effort).
+    publish_user_registered(user_id=user.id, role=user.role.value)
     return UserRead.model_validate(user)
 
 

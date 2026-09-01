@@ -18,11 +18,14 @@ def get_db() -> Generator[Session, None, None]:
     db = SessionLocal()
     try:
         yield db
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 
 
 def init_db() -> None:
-    from app.models import enrollment  # noqa: F401
+    from app.models import enrollment, progress  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
