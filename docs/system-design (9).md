@@ -595,7 +595,7 @@ flowchart LR
     CLAIM -->|yes| STOP[Skip - idempotent]
     CLAIM -->|no| SEND[Send email via SMTP]
     SEND --> MP[Mailpit inbox]
-    CW -->|task result| RED[(Redis)]
+ 
 ```
 
 ---
