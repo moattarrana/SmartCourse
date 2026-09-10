@@ -94,7 +94,6 @@ flowchart TD
     WK ==>|enqueue welcome task, enrollment only| RMQ[[RabbitMQ task queue]]
     RMQ ==> CW[Celery Worker]
     CW -->|SMTP| MP[Mailpit inbox]
-    CW -->|task result| RED[(Redis result backend)]
 
     %% Observability: tracing on all five FastAPI services
     GW -.->|OpenTelemetry traces| JAEG[Jaeger]
